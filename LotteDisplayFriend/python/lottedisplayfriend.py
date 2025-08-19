@@ -7,14 +7,14 @@
 
 # Lotte Display Friend: screen sharing-based automatic resolution switcher
 
+from ipaddress import IPv6Address, ip_address
+from os import getpid as os_getpid
+from socket import gaierror as socket_gaierror
+from socket import gethostbyname as socket_gethostbyname
 from subprocess import CompletedProcess, run
-from sys import stderr, exit
+from sys import exit, stderr
 from time import sleep
 from typing import Final
-from ipaddress import ip_address, IPv6Address
-from os import getpid as os_getpid
-from socket import gethostbyname as socket_gethostbyname, gaierror as socket_gaierror
-
 
 LDF_LSOF_INVOCATION: Final[tuple[str, ...]] = (
     "lsof",
@@ -27,6 +27,7 @@ LDF_LSOF_INVOCATION: Final[tuple[str, ...]] = (
 LDF_DETECT_PRESENT_INTERVAL: Final[float] = 2.0
 LDF_DETECT_AWAY_INTERVAL: Final[float] = 6.0
 LDF_PING_TARGET: Final[str] = "cspmilk"
+LDF_PING_TIMEOUT: Final[float] = 5.0
 LDF_DISPLAYPLACER_COMMAND: Final[str] = "displayplacer"
 LDF_DISPLAYPLACER_SCREENSHARING_MODE: Final[str] = (
     "id:BC5513CE-206D-4C47-BF1A-C5A1D02557C0 res:1920x1200 hz:60 color_depth:8 enabled:true scaling:off origin:(0,0) degree:0"
@@ -113,10 +114,18 @@ def _check_if_screen_sharing() -> bool | None:
         # check if parsecd is connected to non-loopback address
         host, _ = sline[-1].split(":")
         if _is_host_loopback(host):
+            print(
+                f"debug: _check_if_screen_sharing: {host} identified as loopback",
+                file=stderr,
+            )
             continue
 
         # if it is connected to non-loopback address, then we are
         # screen sharing!
+        print(
+            f"debug: _check_if_screen_sharing: {host} identified as non-loopback",
+            file=stderr,
+        )
         return True
 
     return False
@@ -151,12 +160,31 @@ def _set_display_mode(is_screen_sharing: bool) -> None:
 
 
 def _ping_hostname(hostname: str) -> bool:
+    # dns resolution
+    resolved_hostname: str = "localhost"
     try:
-        socket_gethostbyname(hostname)
-        return True
+        resolved_hostname = socket_gethostbyname(hostname)
     except socket_gaierror:
         return False
-    return False
+
+    print(
+        f"debug: _ping_hostname: resolved `{hostname}` -> `{resolved_hostname}`",
+        file=stderr,
+    )
+
+    # ping
+    cp_ping = run(
+        (
+            "ping",  # god forbid ping isn't installed
+            "-c",
+            "1",
+            resolved_hostname,
+        ),
+        capture_output=True,
+    )
+
+    # print("debug: _ping_hostname: ping returned", cp_ping.returncode, file=stderr)
+    return cp_ping.returncode == 0
 
 
 def core_loop() -> None:
@@ -164,6 +192,17 @@ def core_loop() -> None:
     is_screen_sharing: bool = False
 
     while True:
+        print(
+            f"lottedisplayfriend({pid}): status: "
+            f"{'screen sharing' if is_screen_sharing else 'not screen sharing'}\n",
+            file=stderr,
+        )
+        sleep(
+            LDF_DETECT_PRESENT_INTERVAL
+            if (not is_screen_sharing)
+            else LDF_DETECT_AWAY_INTERVAL
+        )
+
         _old_screen_sharing_status = is_screen_sharing
         _current_screen_sharing_status = _check_if_screen_sharing()
 
@@ -176,34 +215,42 @@ def core_loop() -> None:
             _old_screen_sharing_status is False
             and _current_screen_sharing_status is True
         ):
+            print(
+                f"lottedisplayfriend({pid}): status state has changed, "
+                f"{_old_screen_sharing_status} -> {_current_screen_sharing_status}, "
+                f"pinging `{LDF_PING_TARGET}`",
+                file=stderr,
+            )
             if _ping_hostname(LDF_PING_TARGET):
-                print(f"lottedisplayfriend({pid}): pinging `{LDF_PING_TARGET}`", file=stderr)
+                print(
+                    f"lottedisplayfriend({pid}): ping success, setting display mode",
+                    file=stderr,
+                )
                 _set_display_mode(is_screen_sharing)
 
         # else, check if the state changed anyways
         elif _old_screen_sharing_status != _current_screen_sharing_status:
+            print(
+                f"lottedisplayfriend({pid}): status state has changed, "
+                f"{_old_screen_sharing_status} -> {_current_screen_sharing_status}, "
+                f"setting display mode",
+                file=stderr,
+            )
             _set_display_mode(is_screen_sharing)
-            print(f"lottedisplayfriend({pid}): status state has changed")
-
-        print(
-            f"lottedisplayfriend({pid}): status: "
-            f"{'screen sharing' if is_screen_sharing else 'not screen sharing'}",
-            file=stderr
-        )
-
-        sleep(
-            LDF_DETECT_PRESENT_INTERVAL
-            if (not is_screen_sharing)
-            else LDF_DETECT_AWAY_INTERVAL
-        )
 
 
 def main():
     try:
-        print("Lotte Display Friend - Python Testing ver.")
+        print("Lotte Display Friend - Python Testing ver.\n")
 
         if not check_environment():
             exit(1)
+
+        print("lottedisplayfriend: initial display mode setting")
+        initial_state = _check_if_screen_sharing()
+        _set_display_mode(
+            is_screen_sharing=(initial_state if initial_state is not None else False)
+        )
 
         core_loop()
 
