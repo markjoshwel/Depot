@@ -28,7 +28,14 @@ i would want the resolution to be changed to match my laptop's resolution.
 ## Prerequisites
 
 - having a display mode which you want to change to \
-  (use BetterDisplay to generate custom resolutions, or any other EDID-generating tool)
+  (use BetterDisplay to generate custom resolutions, or any other
+  EDID-generating tool)
 
 - having a hostname which you want to ping to trigger the display mode change \
   (as stated in my rationale, i use tailscale)
+
+- [displayplacer](https://github.com/jakehilborn/displayplacer) present on the
+  system, as it is the main tool used to change display modes \
+  (based on the assumption that i may use this in the future, as it is a more
+  featureful version of [displaymode](https://github.com/p00ya/displaymode))
+ 
