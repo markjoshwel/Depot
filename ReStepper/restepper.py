@@ -333,8 +333,8 @@ def _sidestepper_resolve_binary_name() -> str:
             arch = "x86_64"
         case "amd64":
             arch = "x86_64"
-        case "aarch64":
-            arch = "arm64"
+        case "aarch64" | "arm64":  # add 'arm64' as a possible case
+            arch = "aarch64"
         case _:
             arch = "unknown"
 
@@ -442,6 +442,13 @@ def _sidestepper_download_latest() -> str:
     if isinstance(sidestepper_version_path, str):
         return sidestepper_version_path
 
+    log_debug(
+        f"_sidestepper_download_latest: resolved binary name to '{sidestepper_binary_name}'"
+    )
+    log_debug(
+        f"_sidestepper_download_latest: resolved version file path to '{sidestepper_version_path}'"
+    )
+
     version_tag: str = ""
     download_url: str = ""
 
@@ -450,6 +457,7 @@ def _sidestepper_download_latest() -> str:
         ("primary", SIDESTEPPER_PRIMARY_LINK),
         ("secondary", SIDESTEPPER_SECONDARY_LINK),
     ):
+        log_debug(f"_sidestepper_download_latest: checking {name} api endpoint {link}")
         try:
             with urlopen(link) as response_json:
                 response_json = json_loads(response_json.read().decode("utf-8"))
@@ -457,12 +465,12 @@ def _sidestepper_download_latest() -> str:
                 for asset in response_json["assets"]:
                     if asset["name"].lower() == sidestepper_binary_name.lower():
                         download_url = asset["browser_download_url"]
+                        log_debug(
+                            f"_sidestepper_download_latest: retrieval successful; using {name} api endpoint {link}"
+                        )
                         break
                 else:
                     continue
-                log_debug(
-                    f"_sidestepper_download_latest: retrieval successful; using {name} api endpoint {link}"
-                )
                 break
         except Exception as e:
             print(
