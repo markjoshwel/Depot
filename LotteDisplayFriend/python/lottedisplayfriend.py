@@ -1,10 +1,3 @@
-# /// script
-# requires-python = ">=3.13"
-# dependencies = [
-#     "pystray",
-# ]
-# ///
-
 # Lotte Display Friend: screen sharing-based automatic resolution switcher
 
 from ipaddress import IPv6Address, ip_address
@@ -28,7 +21,6 @@ LDF_DETECT_PRESENT_INTERVAL: Final[float] = 2.0
 LDF_DETECT_AWAY_INTERVAL: Final[float] = 6.0
 LDF_PING_TARGET: Final[str] = "cspmilk"
 LDF_PING_TIMEOUT: Final[float] = 5.0
-LDF_DISPLAYPLACER_COMMAND: Final[str] = "displayplacer"
 LDF_DISPLAYPLACER_SCREENSHARING_MODE: Final[str] = (
     "id:BC5513CE-206D-4C47-BF1A-C5A1D02557C0 res:1920x1200 hz:60 color_depth:8 enabled:true scaling:off origin:(0,0) degree:0"
 )
@@ -36,6 +28,7 @@ LDF_DISPLAYPLACER_NORMAL_MODE: Final[str] = (
     "id:BC5513CE-206D-4C47-BF1A-C5A1D02557C0 res:2560x1440 hz:60 color_depth:8 enabled:true scaling:off origin:(0,0) degree:0"
 )
 
+ldf_displayplacer_command: str = "/opt/homebrew/bin/displayplacer"
 
 def _is_host_loopback(host: str) -> bool:
     host = host.strip()
@@ -66,15 +59,28 @@ def _is_host_loopback(host: str) -> bool:
 
 
 def check_environment() -> bool:
-    cp_which: CompletedProcess[bytes] = run(
-        ["which", "displayplacer"], capture_output=True
+    global ldf_displayplacer_command
+    
+    # try `displayplacer --help`
+    cp_displayplacer_help: CompletedProcess[bytes] = run(
+        [ldf_displayplacer_command, "--help"], capture_output=True
     )
-    if cp_which.returncode != 0:
-        print(
-            "error: could not find the command `displayplacer`",
-            file=stderr,
+    
+    # if it fails, figure out where it is
+    if cp_displayplacer_help.returncode != 0:
+        cp_which: CompletedProcess[str] = run(
+            ["which", "displayplacer"],
+            capture_output=True,
+            text=True
         )
-        return False
+        if cp_which.returncode != 0:
+            print(
+                "error: could not find the command `displayplacer`",
+                file=stderr,
+            )
+            return False
+        else:
+            ldf_displayplacer_command = cp_which.stdout.strip()
 
     cp_lsof: CompletedProcess[bytes] = run(LDF_LSOF_INVOCATION, capture_output=True)
     if cp_lsof.returncode != 0:
@@ -140,7 +146,7 @@ def _set_display_mode(is_screen_sharing: bool) -> None:
 
     cp_displayplacer = run(
         (
-            LDF_DISPLAYPLACER_COMMAND,
+            ldf_displayplacer_command,
             display_mode,
         ),
         capture_output=True,
@@ -148,7 +154,7 @@ def _set_display_mode(is_screen_sharing: bool) -> None:
 
     if cp_displayplacer.returncode != 0:
         print(
-            f"error: could not set display mode via `{LDF_DISPLAYPLACER_COMMAND} {display_mode}`",
+            f"error: could not set display mode via `{ldf_displayplacer_command} {display_mode}`",
             file=stderr,
         )
         print(
@@ -194,7 +200,7 @@ def core_loop() -> None:
     while True:
         print(
             f"lottedisplayfriend({pid}): status: "
-            f"{'screen sharing' if is_screen_sharing else 'not screen sharing'}\n",
+            + f"{'screen sharing' if is_screen_sharing else 'not screen sharing'}\n",
             file=stderr,
         )
         sleep(
@@ -217,8 +223,8 @@ def core_loop() -> None:
         ):
             print(
                 f"lottedisplayfriend({pid}): status state has changed, "
-                f"{_old_screen_sharing_status} -> {_current_screen_sharing_status}, "
-                f"pinging `{LDF_PING_TARGET}`",
+                + f"{_old_screen_sharing_status} -> {_current_screen_sharing_status}, "
+                + f"pinging `{LDF_PING_TARGET}`",
                 file=stderr,
             )
             if _ping_hostname(LDF_PING_TARGET):
@@ -232,8 +238,8 @@ def core_loop() -> None:
         elif _old_screen_sharing_status != _current_screen_sharing_status:
             print(
                 f"lottedisplayfriend({pid}): status state has changed, "
-                f"{_old_screen_sharing_status} -> {_current_screen_sharing_status}, "
-                f"setting display mode",
+                + f"{_old_screen_sharing_status} -> {_current_screen_sharing_status}, "
+                + "setting display mode",
                 file=stderr,
             )
             _set_display_mode(is_screen_sharing)
