@@ -3,7 +3,7 @@
 #
 # Copyright (c) 2025 mark joshwel <mark@joshwel.co>
 # Zero-Clause BSD Licence
-# 
+#
 # Permission to use, copy, modify, and/or distribute this software for
 # any purpose with or without fee is hereby granted.
 #
@@ -14,6 +14,14 @@
 # DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
 # AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
 # OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "git-filter-repo",
+#     "tqdm",
+# ]
+# ///
 
 from json import loads as json_loads
 
@@ -31,14 +39,14 @@ from tempfile import TemporaryDirectory
 from textwrap import indent
 from time import time
 from traceback import format_tb
-from typing import Callable, Final, TypeVar
+from typing import Callable, Final, Protocol, TypeVar
 from urllib.request import urlopen
 
 # constants
 INDENT: Final[str] = "   "
 VERBOSE: Final[bool] = "--verbose" in argv
-REPO_URL_GITHUB: Final[str] = "github.com/markjoshwel/wirm"
-REPO_URL_FORGE: Final[str] = "forge.joshwel.co/mark/wirm"
+REPO_URL_GITHUB: Final[str] = getenv("SS_RESTEPPER_GITHUB_URL", f"github.com/markjoshwel/{Path(__file__).parent.name}")
+REPO_URL_FORGE: Final[str] = getenv("SS_RESTEPPER_FORGE_URL", f"forge.joshwel.co/mark/{Path(__file__).parent.name}")
 COMMIT_MESSAGE: Final[str] = "chore(restep): sync with forge"
 COMMIT_AUTHOR: Final[str] = "sota staircase ReStepper <ssrestepper@joshwel.co>"
 NEUTERED_GITATTRIBUTES: Final[str] = (
@@ -50,7 +58,7 @@ GH_USERNAME: Final[str] = "markjoshwel"
 if GH_ACT and GH_TOKEN == "":
     print(
         "error: no personal access token found in SS_RESTEPPER_TOKEN, "
-        "may not have permission to push to github"
+        + "may not have permission to push to github"
     )
     exit(1)
 _WORKERS = getenv("SS_WORKERS", None)
@@ -84,20 +92,20 @@ r: dict[str, str] = {}
 
 
 # define these before importing third-party modules because we use them in the import check
-def generate_command_failure_message(cp: CompletedProcess) -> str:
+def generate_command_failure_message(cp: CompletedProcess[bytes]) -> str:
     return "\n".join(
         [
-            f"\n\nerror: command '{cp.args}' failed with exit code {cp.returncode}",
+            f"\n\nerror: command '{cp.args}' failed with exit code {cp.returncode}",  # pyright: ignore[reportAny]
             f"{INDENT}stdout:",
             (
                 indent(text=cp.stdout.decode(), prefix=f"{INDENT}{INDENT}")
-                if (isinstance(cp.stdout, bytes) and (cp.stdout != b""))
+                if (isinstance(cp.stdout, bytes) and (cp.stdout != b""))  # pyright: ignore[reportUnnecessaryIsInstance]
                 else f"{INDENT}{INDENT}(no output)"
             ),
             f"{INDENT}stderr:",
             (
                 indent(text=cp.stderr.decode(), prefix=f"{INDENT}{INDENT}")
-                if (isinstance(cp.stderr, bytes) and (cp.stderr != b""))
+                if (isinstance(cp.stderr, bytes) and (cp.stderr != b""))  # pyright: ignore[reportUnnecessaryIsInstance]
                 else f"{INDENT}{INDENT}(no output)"
             )
             + "\n",
@@ -106,7 +114,7 @@ def generate_command_failure_message(cp: CompletedProcess) -> str:
 
 
 def log_err(
-    message: str | CompletedProcess,
+    message: str | CompletedProcess[bytes],
     exception: Exception | None = None,
     condition: bool = True,
     exitcode: int | None = None,
@@ -159,7 +167,7 @@ def log_debug(message: str) -> None:
 
 
 def run(
-    command: str | list,
+    command: str | list[str],
     wd: Path | str | None = None,
     capture_output: bool = True,
     give_input: str | None = None,
@@ -199,9 +207,11 @@ def run(
 # attempt to import third-party modules
 try:
     # noinspection PyUnresolvedReferences
-    from tqdm import __version__ as tqdm_version
     # noinspection PyUnresolvedReferences
-    from tqdm import tqdm
+    from tqdm import (
+        __version__ as tqdm_version,  # type: ignore  # pyright: ignore[reportMissingModuleSource]
+    )
+    from tqdm import tqdm  # type: ignore  # pyright: ignore[reportMissingModuleSource]
 
     _tqdm_major, _tqdm_minor, _tqdm_patch = map(int, tqdm_version.split("."))
     if not ((4, 30, 0) <= (_tqdm_major, _tqdm_minor, _tqdm_patch)):
@@ -243,9 +253,17 @@ except ImportError as _import_exc:
     # rerun the script if we're running as one
     exit(
         run(
-            [executable, Path(__file__).absolute(), *argv[1:]], capture_output=False
+            [executable, str(Path(__file__).absolute()), *argv[1:]],
+            capture_output=False,
         ).returncode
     )
+
+
+class ProgressBar(Protocol):
+    """Protocol for progress bar objects (like tqdm)"""
+
+    def update(self, n: int = 1) -> bool | None: ...
+    def close(self) -> None: ...
 
 
 class CopyHighway:
@@ -255,7 +273,7 @@ class CopyHighway:
     """
 
     pool: ThreadPool
-    pbar: tqdm
+    pbar: ProgressBar
     total: int
     respect_ignore: bool = True
 
@@ -278,7 +296,7 @@ class CopyHighway:
             processes=WORKERS,
         )
         self.total = total
-        self.pbar = tqdm(
+        self.pbar = tqdm(  # type: ignore[assignment]
             total=total,
             desc=message,
             unit=" files",
@@ -286,17 +304,17 @@ class CopyHighway:
         )
 
     def callback(self, a: object):
-        self.pbar.update()
+        _ = self.pbar.update()
         return a
 
     def copy2(self, source: Path | str, dest: Path | str) -> None:
         """shutil.copy2()-like function for use with shutil.copytree()"""
-        self.pool.apply_async(copy2, args=(source, dest), callback=self.callback)
+        _ = self.pool.apply_async(copy2, args=(source, dest), callback=self.callback)
 
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object):
         self.pool.close()
         self.pool.join()
         self.pbar.close()
@@ -459,12 +477,12 @@ def _sidestepper_download_latest() -> str:
     ):
         log_debug(f"_sidestepper_download_latest: checking {name} api endpoint {link}")
         try:
-            with urlopen(link) as response_json:
-                response_json = json_loads(response_json.read().decode("utf-8"))
-                version_tag = response_json["tag_name"]
-                for asset in response_json["assets"]:
-                    if asset["name"].lower() == sidestepper_binary_name.lower():
-                        download_url = asset["browser_download_url"]
+            with urlopen(link) as response_json:  # pyright: ignore[reportAny]
+                response_json = json_loads(response_json.read().decode("utf-8"))  # pyright: ignore[reportAny]
+                version_tag = response_json["tag_name"]  # pyright: ignore[reportAny]
+                for asset in response_json["assets"]:  # pyright: ignore[reportAny]
+                    if asset["name"].lower() == sidestepper_binary_name.lower():  # pyright: ignore[reportAny]
+                        download_url = asset["browser_download_url"]  # pyright: ignore[reportAny]
                         log_debug(
                             f"_sidestepper_download_latest: retrieval successful; using {name} api endpoint {link}"
                         )
@@ -500,8 +518,8 @@ def _sidestepper_download_latest() -> str:
     )
     try:
         SIDESTEPPER_GLOBAL_BINARY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with urlopen(download_url) as response:
-            SIDESTEPPER_GLOBAL_BINARY_PATH.write_bytes(response.read())
+        with urlopen(download_url) as response:  # pyright: ignore[reportAny]
+            _ = SIDESTEPPER_GLOBAL_BINARY_PATH.write_bytes(response.read())  # pyright: ignore[reportAny]
     except Exception as e:
         return f"could not download latest sidestepper release {version_tag} from {download_url} to {SIDESTEPPER_GLOBAL_BINARY_PATH} ({e.__class__.__name__}: {e})"
 
@@ -522,7 +540,7 @@ def _sidestepper_download_latest() -> str:
     try:
         sidestepper_version_path.parent.mkdir(parents=True, exist_ok=True)
         with open(sidestepper_version_path, "w") as version_file:
-            version_file.write(version_tag)
+            _ = version_file.write(version_tag)
     except Exception as e:
         return f"could not write latest sidestepper version {version_tag} to '{sidestepper_version_path}' ({e.__class__.__name__}: {e})"
 
@@ -554,7 +572,7 @@ def sidestepper_get(root: Path | None) -> Path | str:
 
     # _sidestepper_resolve_binary_path returned an error string,
     # and it is not empty, propagate it up to the caller to print
-    if isinstance(sidestepper, str) and sidestepper:
+    if isinstance(sidestepper, str) and sidestepper:  # pyright: ignore[reportUnnecessaryIsInstance]
         return sidestepper
 
     # so let's download the latest sidestepper binary
@@ -593,16 +611,16 @@ def _default_post_func(cp: R) -> R:
         the return object from the step function
     """
     if isinstance(cp, CompletedProcess):
-        _command_post_func(cp)
-    return cp
+        _ = _command_post_func(cp)  # pyright: ignore[reportUnknownArgumentType]
+    return cp  # pyright: ignore[reportUnknownVariableType]
 
 
 def _command_post_func(
-    cp: CompletedProcess,
+    cp: CompletedProcess[bytes],
     fail_on_error: bool = True,
     quit_early: bool = False,
     quit_message: str = "the command gave unexpected output",
-) -> CompletedProcess:
+) -> CompletedProcess[bytes]:
     """
     default post-call function for command steps; checks if the command was
     successful and prints the output if it wasn't
@@ -628,8 +646,8 @@ def _command_post_func(
         print(f"\n\nfailure: {quit_message}\n")
 
     else:
-        r["stdout"] = cp.stdout.decode() if isinstance(cp.stdout, bytes) else "\0"
-        r["stderr"] = cp.stderr.decode() if isinstance(cp.stderr, bytes) else "\0"
+        r["stdout"] = cp.stdout.decode() if isinstance(cp.stdout, bytes) else "\0"  # pyright: ignore[reportUnnecessaryIsInstance]
+        r["stderr"] = cp.stderr.decode() if isinstance(cp.stderr, bytes) else "\0"  # pyright: ignore[reportUnnecessaryIsInstance]
         r["blank/stdout"] = "yes" if (r["stdout"].strip() == "") else ""
         r["blank/stderr"] = "yes" if (r["stderr"].strip() == "") else ""
         r["blank"] = "yes" if (r["blank/stdout"] and r["blank/stderr"]) else ""
@@ -643,7 +661,7 @@ def _command_post_func(
             print(generate_command_failure_message(cp))
 
     exit(
-        cp.returncode if (isinstance(cp.returncode, int) and cp.returncode != 0) else 1
+        cp.returncode if (isinstance(cp.returncode, int) and cp.returncode != 0) else 1  # pyright: ignore[reportUnnecessaryIsInstance]
     )
 
 
@@ -721,7 +739,7 @@ def step(
     return rp
 
 
-def post_remote_v(cp: CompletedProcess) -> CompletedProcess:
+def post_remote_v(cp: CompletedProcess[bytes]) -> CompletedProcess[bytes]:
     """
     post-call function for 'git remote -v' command, parses the output and
     checks for the forge and github remotes, storing them in the shared state
@@ -729,7 +747,7 @@ def post_remote_v(cp: CompletedProcess) -> CompletedProcess:
     'remote/github/url' respectively
     """
 
-    if not isinstance(cp.stdout, bytes):
+    if not isinstance(cp.stdout, bytes):  # pyright: ignore[reportUnnecessaryIsInstance]
         return _command_post_func(cp)
 
     for line in cp.stdout.decode().split("\n"):
@@ -761,7 +779,7 @@ def post_remote_v(cp: CompletedProcess) -> CompletedProcess:
     return _command_post_func(cp)
 
 
-def post_filter_repo_check(cp: CompletedProcess) -> CompletedProcess:
+def post_filter_repo_check(cp: CompletedProcess[bytes]) -> CompletedProcess[bytes]:
     """
     post-call function for checking if git-filter-repo is installed
     and optionally installing it if it isn't
@@ -773,7 +791,7 @@ def post_filter_repo_check(cp: CompletedProcess) -> CompletedProcess:
     if input("git filter-repo is not installed, install it? y/n: ").lower() != "y":
         print(
             "install it using 'pip install git-filter-repo' "
-            "or 'pipx install git-filter-repo'",
+            + "or 'pipx install git-filter-repo'",
         )
         return cp
 
@@ -794,18 +812,19 @@ def post_filter_repo_check(cp: CompletedProcess) -> CompletedProcess:
     install_rc = run([*pip_invocation, "install", "git-filter-repo"])
     if install_rc.returncode != 0:
         print("error")
-        _command_post_func(install_rc)
+        _ = _command_post_func(install_rc)
         exit(install_rc.returncode)
     else:
         print("done\n")
 
     # check if it is reachable
-    if run(["git", "filter-repo", "--version"]).returncode != 0:
+    check_rc = run(["git", "filter-repo", "--version"])
+    if check_rc.returncode != 0:
         # revert
-        run([*pip_invocation, "uninstall", "git-filter-repo"])
+        _ = run([*pip_invocation, "uninstall", "git-filter-repo"])
         print(
             "failure: could not install git-filter-repo automatically. "
-            "do it yourself o(*≧▽≦)ツ┏━┓"
+            + "do it yourself o(*≧▽≦)ツ┏━┓"
         )
         exit(-1)
 
@@ -828,7 +847,7 @@ def main() -> None:
         exitcode=2,
     )
     log_err(
-        sidestepper_binary,  # type: ignore
+        str(sidestepper_binary),
         condition=isinstance(sidestepper_binary, str),
         exitcode=3,
     )
@@ -839,7 +858,7 @@ def main() -> None:
     with TemporaryDirectory(delete="--keep" not in argv) as temp_dir:
         temp_path = Path(temp_dir)
         print(
-            "sota staircase ReStepper v12",
+            "sota staircase ReStepper v14",
             f"     real repo : {repo_path}",
             f"     temp repo : {temp_dir}",
             f"   sidestepper : {sidestepper_binary}"
@@ -853,7 +872,7 @@ def main() -> None:
             wd: Path | str = temp_dir,
             capture_output: bool = True,
             give_input: str | None = None,
-        ) -> Callable[[], CompletedProcess]:
+        ) -> Callable[[], CompletedProcess[bytes]]:
             return lambda: run(
                 command,
                 wd=wd,
@@ -862,14 +881,14 @@ def main() -> None:
             )
 
         log_debug("checking for git filter-repo")
-        step(
+        _ = step(
+            desc="6 lfs | checking for git filter-repo",
             func=cmd("git filter-repo --version"),
             post_func=post_filter_repo_check,
-            exitcode=4,
         )
 
         log_debug("checking git status")
-        step(func=cmd("git status --porcelain", wd=repo_path), exitcode=5)
+        _ = step(func=cmd("git status --porcelain", wd=repo_path), exitcode=5)
         if (not r["blank"]) and ("--idonotcare" not in argv):
             log_err(
                 "repository is not clean, please commit changes first",
@@ -877,7 +896,7 @@ def main() -> None:
                 exitcode=5,
             )
 
-        step(
+        _ = step(
             desc="1 pre | finding large files",
             func=cmd(f"{sidestepper_binary}", wd=repo_path),
             exitcode=6,
@@ -891,7 +910,9 @@ def main() -> None:
 
         def get_repo_files() -> list[Path]:
             files: list[Path] = []
-            for file in run("git ls-files", wd=repo_path).stdout.decode().splitlines():
+            for file in (
+                run("git ls-files -z", wd=repo_path).stdout.decode().split("\x00")
+            ):
                 file = file.strip()
                 if not file:
                     continue
@@ -919,7 +940,7 @@ def main() -> None:
                         dst.parent.mkdir(parents=True, exist_ok=True)
                     copier.copy2(repo_path.joinpath(src), dst)
 
-        step(
+        _ = step(
             desc="3 pre | duplicate repo",
             func=lambda: duplicate_repo(),
             reprint=True,
@@ -927,13 +948,19 @@ def main() -> None:
         )
 
         log_debug("double-checking pathlib.Path.cwd()")
-        step(
+        _ = step(
             func=cmd(
                 'python -c "import pathlib; print(pathlib.Path.cwd().absolute())"'
             ),
             exitcode=9,
         )
-        if str(temp_path.absolute()) != r["stdout"].strip():
+        if all(
+            [
+                str(temp_path.absolute()) != r["stdout"].strip(),
+                # quick macOS hack
+                f"/private{temp_path.absolute()}" != r["stdout"].strip(),
+            ]
+        ):
             log_err(
                 f"not inside the temp dir '{str(temp_path.absolute())}' (whuh? internal?)",
                 show_r=True,
@@ -941,7 +968,7 @@ def main() -> None:
             )
 
         log_debug("checking for forge and github remotes")
-        step(
+        _ = step(
             func=cmd("git remote -v"),
             post_func=post_remote_v,
             exitcode=10,
@@ -954,18 +981,18 @@ def main() -> None:
             )
 
         log_debug("getting the current branch")
-        step(func=cmd("git branch --show-current"), exitcode=11)
+        _ = step(func=cmd("git branch --show-current"), exitcode=11)
         branch = r["stdout"].strip()
         if r.get("errored", "yes") or branch == "":
             log_err("couldn't get current branch (whuh?)", show_r=True, exitcode=11)
 
         log_debug("checking if up to date with forge: fetching")
-        step(func=cmd(f"git fetch {r['remote/forge']}"), exitcode=12)
+        _ = step(func=cmd(f"git fetch {r['remote/forge']}"), exitcode=12)
 
         log_debug(
             f"checking if up to date with forge: rev-list HEAD...{r['remote/forge']}/{branch} count"
         )
-        step(
+        _ = step(
             func=cmd(f"git rev-list HEAD...{r['remote/forge']}/{branch} --count"),
             exitcode=13,
         )
@@ -976,9 +1003,11 @@ def main() -> None:
                 exitcode=13,
             )
 
-        step(desc="4 lfs | fetch lfs objects", func=cmd("git lfs fetch"), exitcode=14)
+        _ = step(
+            desc="4 lfs | fetch lfs objects", func=cmd("git lfs fetch"), exitcode=14
+        )
 
-        step(
+        _ = step(
             desc="5 lfs | migrating lfs objects",
             func=cmd(
                 f'git lfs migrate export --everything --include="*" --remote={r["remote/forge"]} --yes',
@@ -987,21 +1016,22 @@ def main() -> None:
             exitcode=15,
         )
 
-        step(
+        _ = step(
             desc="6 lfs | uninstall lfs in repo",
             func=cmd("git lfs uninstall"),
             exitcode=16,
         )
 
         log_debug("checking if lfs objects still exist")
-        step(
+        _ = step(
+            desc="6 lfs | checking for lfs files",
             func=cmd("git lfs ls-files"),
             exitcode=17,
         )
         if not r["blank"]:
             log_err(
                 "critical error (whuh? internal?): "
-                "lfs objects still exist post-migrate and uninstall",
+                + "lfs objects still exist post-migrate and uninstall",
                 show_r=True,
                 exitcode=18,
             )
@@ -1026,11 +1056,11 @@ def main() -> None:
             ]
             log_debug(f"found {len(sotaignored_files)} file(s) in .sotaignore")
 
-            step(
+            _ = step(
                 desc=f"7 lfs | filter repo and {len(sotaignored_files)} file(s)",
                 func=cmd(
                     "git filter-repo --force --strip-blobs-bigger-than 100M --invert-paths "
-                    + " ".join(f'--path "{lf}"' for lf in sotaignored_files)
+                    + (" ".join(f'--path "{lf}"' for lf in sotaignored_files))
                 ),
                 exitcode=20,
             )
@@ -1038,17 +1068,17 @@ def main() -> None:
             log_debug(
                 "copying .sotaignore to temp repo; step 5 wipes uncommitted changes"
             )
-            step(
+            _ = step(
                 func=lambda: copy2(
                     repo_sotaignore_path, Path(temp_path).joinpath(".sotaignore")
                 ),
                 exitcode=21,
             )
 
-        def neuter_and_commit() -> CompletedProcess:
+        def neuter_and_commit() -> CompletedProcess[bytes]:
             # neuter
             for repo_file in temp_path.rglob(".gitattributes"):
-                repo_file.write_text(NEUTERED_GITATTRIBUTES, encoding="utf-8")
+                _ = repo_file.write_text(NEUTERED_GITATTRIBUTES, encoding="utf-8")
 
             # add
             if GH_ACT:
@@ -1071,7 +1101,7 @@ def main() -> None:
                 f'git commit --allow-empty -am "{COMMIT_MESSAGE}" --author="{COMMIT_AUTHOR}"',
             )()
 
-        step(
+        _ = step(
             desc="8 fin | neuter .gitattributes and commit",
             func=neuter_and_commit,
             exitcode=22,
@@ -1079,7 +1109,7 @@ def main() -> None:
 
         if r.get("remote/github") is None:
             log_debug(f"github remote doesn't exist, adding via {REPO_URL_GITHUB=}")
-            step(
+            _ = step(
                 func=cmd(f"git remote add github https://{REPO_URL_GITHUB}.git"),
                 exitcode=23,
             )
@@ -1091,7 +1121,7 @@ def main() -> None:
                 )
             r["remote/github"] = "github"
 
-        step(
+        _ = step(
             desc=f"9 fin | fetch {r['remote/github']}",
             func=cmd(f"git fetch {r['remote/github']}"),
             exitcode=24,
@@ -1103,16 +1133,17 @@ def main() -> None:
             else f"git push https://{GH_USERNAME}:{GH_TOKEN}@{REPO_URL_GITHUB}.git {branch} --force"
         )
 
-        step(
+        _ = step(
             desc=f"X fin | pushing to {r['remote/github']}/{branch}",
             func=cmd(push_invocation if ("--test" not in argv) else "git --version"),
+            post_func=_command_post_func,
             exitcode=25,
         )
 
     cumulative_end_time = time()
     print(
         f"\n--- done! took {generate_time_elapsed_string(cumulative_end_time - cumulative_start_time)}~ "
-        "☆*: .｡. o(≧▽≦)o .｡.:*☆ ---",
+        + "☆*: .｡. o(≧▽≦)o .｡.:*☆ ---",
         flush=True,
     )
 
