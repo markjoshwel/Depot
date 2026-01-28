@@ -858,7 +858,7 @@ def main() -> None:
     with TemporaryDirectory(delete="--keep" not in argv) as temp_dir:
         temp_path = Path(temp_dir)
         print(
-            "sota staircase ReStepper v14",
+            "sota staircase ReStepper v15",
             f"     real repo : {repo_path}",
             f"     temp repo : {temp_dir}",
             f"   sidestepper : {sidestepper_binary}"
