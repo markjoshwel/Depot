@@ -1,7 +1,7 @@
 # sota staircase ReStepper
 # forge -> github one-way repo sync script
 #
-# Copyright (c) 2025 mark joshwel <mark@joshwel.co>
+# Copyright (c) 2024-2026 mark joshwel <mark@joshwel.co>
 # Zero-Clause BSD Licence
 #
 # Permission to use, copy, modify, and/or distribute this software for
